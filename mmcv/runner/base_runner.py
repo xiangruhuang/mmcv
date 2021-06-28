@@ -17,7 +17,6 @@ from .log_buffer import LogBuffer
 from .priority import get_priority
 from .utils import get_time_str
 
-
 class BaseRunner(metaclass=ABCMeta):
     """The base class of Runner, a training helper for PyTorch.
 
@@ -46,6 +45,7 @@ class BaseRunner(metaclass=ABCMeta):
             Defaults to None.
         max_epochs (int, optional): Total training epochs.
         max_iters (int, optional): Total training iterations.
+        vis (visualizer, optional): A Visualizer.
     """
 
     def __init__(self,
@@ -56,7 +56,8 @@ class BaseRunner(metaclass=ABCMeta):
                  logger=None,
                  meta=None,
                  max_iters=None,
-                 max_epochs=None):
+                 max_epochs=None,
+                 visualizer=None):
         if batch_processor is not None:
             if not callable(batch_processor):
                 raise TypeError('batch_processor must be callable, '
@@ -134,6 +135,11 @@ class BaseRunner(metaclass=ABCMeta):
         self._max_iters = max_iters
         # TODO: Redesign LogBuffer, it is not flexible and elegant enough
         self.log_buffer = LogBuffer()
+        if visualizer is not None:
+            from mmdet3d.core.visualizer import build_visualizer
+            self.vis = build_visualizer(visualizer)
+        else:
+            self.vis = None
 
     @property
     def model_name(self):
@@ -339,11 +345,6 @@ class BaseRunner(metaclass=ABCMeta):
 
         self._epoch = checkpoint['meta']['epoch']
         self._iter = checkpoint['meta']['iter']
-        if self.meta is None:
-            self.meta = {}
-        self.meta.setdefault('hook_msgs', {})
-        # load `last_ckpt`, `best_score`, `best_ckpt`, etc. for hook messages
-        self.meta['hook_msgs'].update(checkpoint['meta'].get('hook_msgs', {}))
 
         # Re-calculate the number of iterations when resuming
         # models with different number of GPUs
@@ -357,9 +358,6 @@ class BaseRunner(metaclass=ABCMeta):
                                  self.world_size)
                 self.logger.info('the iteration number is changed due to '
                                  'change of GPU number')
-
-        # resume meta information meta
-        self.meta = checkpoint['meta']
 
         if 'optimizer' in checkpoint and resume_optimizer:
             if isinstance(self.optimizer, Optimizer):
@@ -394,7 +392,7 @@ class BaseRunner(metaclass=ABCMeta):
             hook = mmcv.build_from_cfg(lr_config, HOOKS)
         else:
             hook = lr_config
-        self.register_hook(hook, priority=10)
+        self.register_hook(hook)
 
     def register_momentum_hook(self, momentum_config):
         if momentum_config is None:
@@ -415,7 +413,7 @@ class BaseRunner(metaclass=ABCMeta):
             hook = mmcv.build_from_cfg(momentum_config, HOOKS)
         else:
             hook = momentum_config
-        self.register_hook(hook, priority=30)
+        self.register_hook(hook)
 
     def register_optimizer_hook(self, optimizer_config):
         if optimizer_config is None:
@@ -425,7 +423,7 @@ class BaseRunner(metaclass=ABCMeta):
             hook = mmcv.build_from_cfg(optimizer_config, HOOKS)
         else:
             hook = optimizer_config
-        self.register_hook(hook, priority=50)
+        self.register_hook(hook)
 
     def register_checkpoint_hook(self, checkpoint_config):
         if checkpoint_config is None:
@@ -435,7 +433,7 @@ class BaseRunner(metaclass=ABCMeta):
             hook = mmcv.build_from_cfg(checkpoint_config, HOOKS)
         else:
             hook = checkpoint_config
-        self.register_hook(hook, priority=70)
+        self.register_hook(hook)
 
     def register_logger_hooks(self, log_config):
         if log_config is None:
@@ -444,7 +442,7 @@ class BaseRunner(metaclass=ABCMeta):
         for info in log_config['hooks']:
             logger_hook = mmcv.build_from_cfg(
                 info, HOOKS, default_args=dict(interval=log_interval))
-            self.register_hook(logger_hook, priority=90)
+            self.register_hook(logger_hook, priority='VERY_LOW')
 
     def register_timer_hook(self, timer_config):
         if timer_config is None:
@@ -454,20 +452,7 @@ class BaseRunner(metaclass=ABCMeta):
             hook = mmcv.build_from_cfg(timer_config_, HOOKS)
         else:
             hook = timer_config
-        self.register_hook(hook, priority=80)
-
-    def register_custom_hooks(self, custom_config):
-        if custom_config is None:
-            return
-
-        if not isinstance(custom_config, list):
-            custom_config = [custom_config]
-
-        for item in custom_config:
-            if isinstance(item, dict):
-                self.register_hook_from_cfg(item)
-            else:
-                self.register_hook(item, priority='NORMAL')
+        self.register_hook(hook)
 
     def register_profiler_hook(self, profiler_config):
         if profiler_config is None:
@@ -485,20 +470,17 @@ class BaseRunner(metaclass=ABCMeta):
                                 checkpoint_config=None,
                                 log_config=None,
                                 momentum_config=None,
-                                timer_config=dict(type='IterTimerHook'),
-                                custom_hooks_config=None):
-        """Register default and custom hooks for training.
+                                timer_config=dict(type='IterTimerHook')):
+        """Register default hooks for training.
 
-        Default and custom hooks include:
+        Default hooks include:
 
-          Hooks                 Priority
-        - LrUpdaterHook         10
-        - MomentumUpdaterHook   30
-        - OptimizerStepperHook  50
-        - CheckpointSaverHook   70
-        - IterTimerHook         80
-        - LoggerHook(s)         90
-        - CustomHook(s)         50 (default)
+        - LrUpdaterHook
+        - MomentumUpdaterHook
+        - OptimizerStepperHook
+        - CheckpointSaverHook
+        - IterTimerHook
+        - LoggerHook(s)
         """
         self.register_lr_hook(lr_config)
         self.register_momentum_hook(momentum_config)
@@ -506,4 +488,3 @@ class BaseRunner(metaclass=ABCMeta):
         self.register_checkpoint_hook(checkpoint_config)
         self.register_timer_hook(timer_config)
         self.register_logger_hooks(log_config)
-        self.register_custom_hooks(custom_hooks_config)

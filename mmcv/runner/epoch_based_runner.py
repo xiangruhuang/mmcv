@@ -13,7 +13,6 @@ from .builder import RUNNERS
 from .checkpoint import save_checkpoint
 from .utils import get_host_info
 
-
 @RUNNERS.register_module()
 class EpochBasedRunner(BaseRunner):
     """Epoch-based Runner.
@@ -45,6 +44,23 @@ class EpochBasedRunner(BaseRunner):
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
         for i, data_batch in enumerate(self.data_loader):
+            if self.vis is not None:
+                self.vis.visualize(
+                    data_batch['points'].data[0][0].numpy(),
+                    data_batch['gt_bboxes_3d'].data[0][0],
+                    data_batch['gt_labels_3d'].data[0][0].numpy(),
+                    )
+            #gt_labels_3d = data_batch['gt_labels_3d'].data[0][0].numpy()
+            #classes = self.data_loader.dataset.dataset.get_classes()
+            #gt_names = [classes[ind] for ind in gt_labels_3d]
+
+            #gt_bboxes_3d = data_batch['gt_bboxes_3d'].data[0][0]
+            #new_gt_bboxes_3d = gt_bboxes_3d.new_box(gt_bboxes_3d.tensor.numpy())
+            #new_gt_bboxes_3d.box_dim = 7
+
+            #vis.add_bboxes(gt_bboxes_3d.tensor.numpy()[:, :7], cls_names=gt_names)
+            #vis.show()
+
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
